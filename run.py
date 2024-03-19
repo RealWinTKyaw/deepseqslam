@@ -62,8 +62,8 @@ parser.add_argument('--seq_len', default=10, type=int,
                     help='sequence length: ds (default: 10)')
 parser.add_argument('--nclasses', default=190, type=int,
                     help='number of classes = nimgs - seq_len (default: 190)')
-parser.add_argument('--img_size', default=224, type=int,
-                    help='image size (default: 224)')
+parser.add_argument('--img_size', default=128, type=int,
+                    help='image size (default: 128)')
 parser.add_argument('--sequence_model', metavar='MODEL', default='lstm',
                     choices=sequence_models,
                     help='model architecture: ' +
@@ -136,7 +136,7 @@ class DeepSeqSLAM(nn.Module):
 
         elif FLAGS.cnn_arch == "squeezenet1_0":
             """ Squeezenet """
-            self.feature_dim = 512
+            self.feature_dim = 128
             self.cnn.classifier[1] = nn.Identity()
 
         elif FLAGS.cnn_arch == "densenet161":
@@ -151,7 +151,7 @@ class DeepSeqSLAM(nn.Module):
         self.num_classes = num_classes
         self.num_layers = 1
         self.input_size = self.feature_dim + 2
-        self.hidden_units = 512
+        self.hidden_units = 128
 
         if FLAGS.sequence_model == "lstm":
             self.sequence_model = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, batch_first=True)

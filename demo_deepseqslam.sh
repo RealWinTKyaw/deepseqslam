@@ -14,9 +14,11 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='alexnet'
+CNN='resnet18'
 
-MODEL_NAME="gp_${CNN}_lstm"
+SEQ_MODEL='lstm'
+
+MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
 
 python run.py train \
     --model_name $MODEL_NAME \
@@ -25,7 +27,8 @@ python run.py train \
     --seq_len $SEQ_LENGHT \
     --epochs $EPOCHS \
     --val_set $SEQ2 \
-    --cnn_arch $CNN
+    --cnn_arch $CNN \
+    --sequence_model $SEQ_MODEL
 
 for i in $SEQ1 $SEQ2 $SEQ3
 do
@@ -35,5 +38,6 @@ do
     --batch_size $BATCH_SIZE \
     --seq_len $SEQ_LENGHT \
     --val_set $i \
-    --cnn_arch $CNN
+    --cnn_arch $CNN \
+    --sequence_model $SEQ_MODEL
 done
