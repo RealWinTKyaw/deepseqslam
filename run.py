@@ -18,6 +18,8 @@ model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
+sequence_models = ['lstm', 'gru', 'transformer']
+
 normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 
@@ -62,6 +64,11 @@ parser.add_argument('--nclasses', default=190, type=int,
                     help='number of classes = nimgs - seq_len (default: 190)')
 parser.add_argument('--img_size', default=224, type=int,
                     help='image size (default: 224)')
+parser.add_argument('--sequence_model', metavar='MODEL', default='lstm',
+                    choices=sequence_models,
+                    help='model architecture: ' +
+                        ' | '.join(model_names) +
+                        ' (default: lstm)')
 
 FLAGS, FIRE_FLAGS = parser.parse_known_args()
 
@@ -146,7 +153,23 @@ class DeepSeqSLAM(nn.Module):
         self.input_size = self.feature_dim + 2
         self.hidden_units = 512
 
-        self.lstm = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
+        if FLAGS.sequence_model == "lstm":
+            self.sequence_model = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
+
+        elif FLAGS.sequence_model == "gru":
+            self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
+
+        elif FLAGS.sequence_model == "transformer":
+            self.sequence_model = nn.Transformer(d_model = self.input_size, 
+                                                 nhead = self.num_layers, 
+                                                 num_encoder_layers = self.num_layers, 
+                                                 num_decoder_layers = self.num_layers, 
+                                                 dim_feedforward = self.hidden_units, batch_first=True)
+
+        else:
+            print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
+            exit()
+
         self.mlp = nn.Linear(self.hidden_units, self.num_classes)
 
     def forward(self, inp):
@@ -163,7 +186,7 @@ class DeepSeqSLAM(nn.Module):
         x = torch.cat((x,p),2)
 
 	# Propagate through LSTM
-        r_out, _ = self.lstm(x, None)
+        r_out, _ = self.sequence_model(x, None)
         out = self.mlp(r_out[:,-1,:])
 
         return out
