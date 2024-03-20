@@ -14,9 +14,9 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='resnet18'
+CNN='alexnet'
 
-SEQ_MODEL='lstm'
+SEQ_MODEL='gru'
 
 MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
 

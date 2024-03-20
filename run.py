@@ -46,8 +46,8 @@ parser.add_argument('--val_set', default='day_right', type=str,
                     help='validation_set (default: day_right)')
 parser.add_argument('--ngpus', default=2, type=int,
                     help='number of GPUs for training; 0 if you want to run on CPU (default: 2)')
-parser.add_argument('-j', '--workers', default=4, type=int,
-                    help='number of data loading workers (default: 4)')
+parser.add_argument('-j', '--workers', default=1, type=int,
+                    help='number of data loading workers (default: 1)')
 parser.add_argument('--epochs', default=200, type=int,
                     help='number of total epochs to run (default: 200)')
 parser.add_argument('--batch_size', default=32, type=int,
