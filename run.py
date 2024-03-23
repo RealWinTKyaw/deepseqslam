@@ -1,5 +1,6 @@
 import os, argparse, subprocess, shlex, io, time, glob, pickle, pprint
 
+import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -17,8 +18,9 @@ import torchvision.models as models
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
+from tcn import *
 
-sequence_models = ['lstm', 'gru', 'transformer']
+sequence_models = ['lstm', 'gru', 'tcn']
 
 normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
@@ -136,7 +138,7 @@ class DeepSeqSLAM(nn.Module):
 
         elif FLAGS.cnn_arch == "squeezenet1_0":
             """ Squeezenet """
-            self.feature_dim = 128
+            self.feature_dim = 512
             self.cnn.classifier[1] = nn.Identity()
 
         elif FLAGS.cnn_arch == "densenet161":
@@ -151,20 +153,17 @@ class DeepSeqSLAM(nn.Module):
         self.num_classes = num_classes
         self.num_layers = 1
         self.input_size = self.feature_dim + 2
-        self.hidden_units = 128
-
+        self.hidden_units = 512
+        
+        # sh demo_deepseqslam.sh
         if FLAGS.sequence_model == "lstm":
             self.sequence_model = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
 
         elif FLAGS.sequence_model == "gru":
             self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
 
-        elif FLAGS.sequence_model == "transformer":
-            self.sequence_model = nn.Transformer(d_model = self.input_size, 
-                                                 nhead = self.num_layers, 
-                                                 num_encoder_layers = self.num_layers, 
-                                                 num_decoder_layers = self.num_layers, 
-                                                 dim_feedforward = self.hidden_units, batch_first=True)
+        elif FLAGS.sequence_model == "tcn":
+            self.sequence_model = TemporalConvNetWithHiddenState(self.input_size, self.hidden_units, self.num_layers)
 
         else:
             print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
@@ -185,7 +184,7 @@ class DeepSeqSLAM(nn.Module):
         # Concatenate descriptor (x) with positional data (p)
         x = torch.cat((x,p),2)
 
-	# Propagate through LSTM
+	# Propagate through sequence model
         r_out, _ = self.sequence_model(x, None)
         out = self.mlp(r_out[:,-1,:])
 
@@ -232,7 +231,8 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', 
                }
     global_acc = 0
     epoch_acc = 0
-
+    
+    start_time = time.time()
     for epoch in tqdm.trange(start_epoch, FLAGS.epochs + 1, initial=start_epoch, desc='epoch'):
         data_load_start = np.nan
         loop = tqdm.tqdm(enumerate(trainer.data_loader), total=len(trainer.data_loader), leave=True)
@@ -288,8 +288,9 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', 
                 torch.save(ckpt_data, os.path.join(FLAGS.output_path,
                                                    f'model_{FLAGS.model_name.lower()}.pth.tar'))
 
+    end_time = time.time()
     print('loss=', record['loss'], 'top1=', record['top1'], 'top5=', record['top5'], 'lr=', record['learning_rate'])
-
+    print(f"Training time: {end_time-start_time} seconds")
 
 class SequentialDataset(Dataset):
     """Sequence-based dataset."""

@@ -4,7 +4,7 @@ SEQ_LENGHT=10
 
 BATCH_SIZE=16
 
-EPOCHS=100
+EPOCHS=50
 
 NGPUS=1
 
@@ -16,7 +16,7 @@ SEQ3='night_right'
 
 CNN='alexnet'
 
-SEQ_MODEL='gru'
+SEQ_MODEL='tcn'
 
 MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
 
