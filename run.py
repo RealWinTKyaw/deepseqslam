@@ -163,7 +163,7 @@ class DeepSeqSLAM(nn.Module):
             self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
 
         elif FLAGS.sequence_model == "tcn":
-            self.sequence_model = TemporalConvNetWithHiddenState(self.input_size, self.hidden_units, self.num_layers)
+            self.sequence_model = TemporalConvNet(self.input_size, self.hidden_units, self.num_layers)
 
         else:
             print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
