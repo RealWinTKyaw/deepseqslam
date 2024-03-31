@@ -1,5 +1,5 @@
 import os, argparse, subprocess, shlex, io, time, glob, pickle, pprint
-
+# sh demo_deepseqslam.sh
 import time
 import numpy as np
 import pandas as pd
@@ -12,13 +12,13 @@ import torch
 import torch.nn as nn
 import torch.utils.model_zoo
 from torch.utils.data import Dataset, DataLoader
+from pytorch_tcn import TCN
 
 import torchvision
 import torchvision.models as models
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
-from tcn import *
 
 sequence_models = ['lstm', 'gru', 'tcn']
 
@@ -154,16 +154,18 @@ class DeepSeqSLAM(nn.Module):
         self.num_layers = 1
         self.input_size = self.feature_dim + 2
         self.hidden_units = 512
+        self.dropout = 0.3
         
         # sh demo_deepseqslam.sh
         if FLAGS.sequence_model == "lstm":
-            self.sequence_model = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
+            self.sequence_model = nn.LSTM(self.input_size, self.hidden_units, self.num_layers, dropout=self.dropout, batch_first=True)
 
         elif FLAGS.sequence_model == "gru":
-            self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, batch_first=True)
+            self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, dropout=self.dropout, batch_first=True)
 
         elif FLAGS.sequence_model == "tcn":
-            self.sequence_model = TemporalConvNet(self.input_size, self.hidden_units, self.num_layers)
+            #self.sequence_model = TemporalConvNet(self.input_size, self.hidden_units, self.num_layers)
+            self.sequence_model = TCN(self.input_size, [self.hidden_units], input_shape='NLC', dropout=self.dropout)
 
         else:
             print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
@@ -185,24 +187,31 @@ class DeepSeqSLAM(nn.Module):
         x = torch.cat((x,p),2)
 
 	# Propagate through sequence model
-        r_out, _ = self.sequence_model(x, None)
+        if FLAGS.sequence_model == "tcn":
+            r_out = self.sequence_model(x)
+        else:
+            r_out, _ = self.sequence_model(x, None)
         out = self.mlp(r_out[:,-1,:])
 
         return out
 
-def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',  # useful when you want to restart training
-          save_train_epochs=.1,  # how often save output during training
-          save_val_epochs=.5,  # how often save output during validation
-          save_model_epochs=5,  # how often save model weigths
-          save_model_secs=60 * 1,  # how often save model (in sec)
-          save_best_model=True  # save best model weigths
-          ):
+def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',  
+          save_train_epochs=.1,  
+          save_val_epochs=.5,  
+          save_model_epochs=5,  
+          save_model_secs=60 * 1,  
+          save_best_model=True,
+          validate_every=10,
+          patience=10):  
 
     print(FLAGS)
 
     trainer = DeepSeqSLAMTrain()
 
     print(trainer.model)
+    
+    best_val_loss = float('inf')  # Initialize best validation loss
+    epochs_since_improvement = 0  # Initialize counter for epochs since last improvement
 
     start_epoch = 0
     if restore_path is not None and FLAGS.load:
@@ -232,10 +241,16 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', 
     global_acc = 0
     epoch_acc = 0
     
-    start_time = time.time()
+    epoch_train_losses = []  # List to store average training losses for each epoch
+    epoch_val = []
+    epoch_val_losses = []    # List to store validation losses for each epoch
+
     for epoch in tqdm.trange(start_epoch, FLAGS.epochs + 1, initial=start_epoch, desc='epoch'):
         data_load_start = np.nan
         loop = tqdm.tqdm(enumerate(trainer.data_loader), total=len(trainer.data_loader), leave=True)
+        
+        epoch_loss_sum = 0.0  # Accumulator for the training loss in the current epoch
+        epoch_step_count = 0  # Counter for the number of steps in the current epoch
 
         for step, data in loop:
             data_load_time = time.time() - data_load_start
@@ -270,15 +285,20 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', 
                                     'epoch': frac_epoch,
                                     'wall_time': time.time()}
                            }
-
-                if save_train_steps is not None:
-                    if step in save_train_steps:
-                        results[trainer.name] = record
+                
+                # Accumulate the training loss for the current epoch
+                epoch_loss_sum += record['loss']
+                epoch_step_count += 1
 
             loop.set_description(f"Epoch [{epoch}/{FLAGS.epochs + 1}]")
             loop.set_postfix(loss=record['loss'], top1=record['top1'], top5=record['top5'],lr=record['learning_rate'])
 
             data_load_start = time.time()
+        
+        # Calculate the average training loss for the current epoch
+        if epoch_step_count > 0:
+            epoch_avg_loss = epoch_loss_sum / epoch_step_count
+            epoch_train_losses.append(epoch_avg_loss)
 
         trainer.lr.step(record['top1'])
         epoch_acc = record['top1']
@@ -287,10 +307,31 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', 
                 global_acc = epoch_acc
                 torch.save(ckpt_data, os.path.join(FLAGS.output_path,
                                                    f'model_{FLAGS.model_name.lower()}.pth.tar'))
+        if epoch % validate_every == 0:
+            epoch_val.append(epoch)
+            val_loss = val(training=True)
+            epoch_val_losses.append(val_loss)
 
-    end_time = time.time()
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_since_improvement = 0
+            else:
+                epochs_since_improvement += 1
+                if epochs_since_improvement >= patience:
+                    print(f'Validation loss has not improved for {patience} epochs. Early stopping...')
+                    break  # Stop training
+
     print('loss=', record['loss'], 'top1=', record['top1'], 'top5=', record['top5'], 'lr=', record['learning_rate'])
-    print(f"Training time: {end_time-start_time} seconds")
+
+    # Plot and save training loss curve
+    # Plot both training and validation loss curves
+    plt.plot(epoch_train_losses, label='Training Loss')
+    plt.plot(epoch_val, epoch_val_losses, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss Curves')
+    plt.legend()
+    plt.savefig(f'results/{FLAGS.model_name.lower()}/training_and_validation_loss_curves.jpg', bbox_inches='tight')
 
 class SequentialDataset(Dataset):
     """Sequence-based dataset."""
@@ -347,7 +388,7 @@ class DeepSeqSLAMTrain(object):
         self.optimizer = torch.optim.Adam(self.model.parameters(),
                                           lr=FLAGS.lr)
         self.lr = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.1,
-                      patience=100, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-6,
+                      patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-6,
                       eps=1e-08, verbose=False)
 
         self.loss = nn.CrossEntropyLoss()
@@ -388,15 +429,15 @@ class DeepSeqSLAMTrain(object):
         return record
 
 
-def val(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar'):
+def val(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar', training=False):
 
-    validator = DeepSeqSLAMVal()
+    validator = DeepSeqSLAMVal(training)
     model = validator.model
 
     if restore_path is not None:
         ckpt_data = torch.load(restore_path)
         start_epoch = ckpt_data['epoch']
-        model.load_state_dict(ckpt_data['state_dict'])
+        model.load_state_dict(ckpt_data['state_dict'], strict=False)
         print('Model restored!')
 
     results = validator()
@@ -404,11 +445,14 @@ def val(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar'):
     print('loss = ', results['loss'], 'top1 = ', results['top1'],
           'top5 = ', results['top5'])
 
+    return results['loss']
+
 class DeepSeqSLAMVal(object):
 
-    def __init__(self):
+    def __init__(self, training):
         self.name = 'val'
-
+        self.training = training
+        
         self.data_loader = self.data()
         num_classes = FLAGS.nimgs - FLAGS.seq_len
         self.model = get_model(num_classes)
@@ -453,13 +497,14 @@ class DeepSeqSLAMVal(object):
         for key in record:
             record[key] /= samples
 
-        y_pred = torch.cat(y_pred, dim=0).data.cpu().numpy()
-        plt.plot(y_pred,',')
-        plt.savefig(f'results/{FLAGS.model_name.lower()}/best_matches_{FLAGS.val_set}.jpg', bbox_inches='tight')
-        sim_m = torch.cat(sim_m, dim=0).data.cpu().numpy()
-        plt.imshow(sim_m,cmap='jet_r')
-        plt.colorbar()
-        plt.savefig(f'results/{FLAGS.model_name.lower()}/diff_matrix_{FLAGS.val_set}.jpg', bbox_inches='tight')
+        if not self.training:
+            y_pred = torch.cat(y_pred, dim=0).data.cpu().numpy()
+            plt.plot(y_pred,',')
+            plt.savefig(f'results/{FLAGS.model_name.lower()}/best_matches_{FLAGS.val_set}.jpg', bbox_inches='tight')
+            sim_m = torch.cat(sim_m, dim=0).data.cpu().numpy()
+            plt.imshow(sim_m,cmap='jet_r')
+            plt.colorbar()
+            plt.savefig(f'results/{FLAGS.model_name.lower()}/diff_matrix_{FLAGS.val_set}.jpg', bbox_inches='tight')
 
         return record
 

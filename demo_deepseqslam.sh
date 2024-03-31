@@ -4,7 +4,7 @@ SEQ_LENGHT=10
 
 BATCH_SIZE=16
 
-EPOCHS=50
+EPOCHS=100
 
 NGPUS=1
 
@@ -14,7 +14,7 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='alexnet'
+CNN='vgg16'
 
 SEQ_MODEL='tcn'
 
