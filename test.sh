@@ -2,9 +2,7 @@
 
 SEQ_LENGHT=16
 
-BATCH_SIZE=8
-
-EPOCHS=100
+BATCH_SIZE=16
 
 NGPUS=1
 
@@ -14,21 +12,11 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='squeezenet1_0'
+CNN='densenet161'
 
-SEQ_MODEL='gru'
+SEQ_MODEL='lstm'
 
 MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
-
-python run.py train \
-    --model_name $MODEL_NAME \
-    --ngpus $NGPUS \
-    --batch_size $BATCH_SIZE \
-    --seq_len $SEQ_LENGHT \
-    --epochs $EPOCHS \
-    --val_set $SEQ2 \
-    --cnn_arch $CNN \
-    --sequence_model $SEQ_MODEL
 
 for i in $SEQ1 $SEQ2 $SEQ3
 do

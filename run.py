@@ -164,8 +164,8 @@ class DeepSeqSLAM(nn.Module):
             self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, dropout=self.dropout, batch_first=True)
 
         elif FLAGS.sequence_model == "tcn":
-            #self.sequence_model = TemporalConvNet(self.input_size, self.hidden_units, self.num_layers)
-            self.sequence_model = TCN(self.input_size, [self.hidden_units], input_shape='NLC', dropout=self.dropout)
+            self.sequence_model = TCN(self.input_size, [self.hidden_units]*3, use_skip_connections=True, 
+                                      input_shape='NLC', dropout=self.dropout)
 
         else:
             print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
@@ -201,8 +201,8 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',
           save_model_epochs=5,  
           save_model_secs=60 * 1,  
           save_best_model=True,
-          validate_every=10,
-          patience=10):  
+          validate_every=5,
+          patience=3):  
 
     print(FLAGS)
 
@@ -302,8 +302,8 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',
 
         trainer.lr.step(record['top1'])
         epoch_acc = record['top1']
-        if save_best_model is True and global_step > FLAGS.epochs-5:
-            if global_acc < epoch_acc:
+        if save_best_model:
+            if global_acc < epoch_acc or epoch == 0:
                 global_acc = epoch_acc
                 torch.save(ckpt_data, os.path.join(FLAGS.output_path,
                                                    f'model_{FLAGS.model_name.lower()}.pth.tar'))
@@ -318,7 +318,7 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',
             else:
                 epochs_since_improvement += 1
                 if epochs_since_improvement >= patience:
-                    print(f'Validation loss has not improved for {patience} epochs. Early stopping...')
+                    print(f'Validation loss has not improved for {patience*validate_every} epochs. Early stopping...')
                     break  # Stop training
 
     print('loss=', record['loss'], 'top1=', record['top1'], 'top5=', record['top5'], 'lr=', record['learning_rate'])
