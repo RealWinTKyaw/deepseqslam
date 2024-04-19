@@ -16,7 +16,7 @@ SEQ3='night_right'
 
 CNN='squeezenet1_0'
 
-SEQ_MODEL='gru'
+SEQ_MODEL='lstm'
 
 MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
 

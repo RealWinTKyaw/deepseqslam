@@ -1,8 +1,8 @@
 #!/bin/sh
 
-SEQ_LENGHT=16
+SEQ_LENGHT=10
 
-BATCH_SIZE=16
+BATCH_SIZE=8
 
 NGPUS=1
 
@@ -12,7 +12,7 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='densenet161'
+CNN='squeezenet1_0'
 
 SEQ_MODEL='lstm'
 
