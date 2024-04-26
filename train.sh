@@ -1,8 +1,8 @@
 #!/bin/sh
 
-SEQ_LENGHT=16
+SEQ_LENGHT=4
 
-BATCH_SIZE=8
+BATCH_SIZE=32
 
 EPOCHS=100
 
@@ -14,9 +14,11 @@ SEQ2='day_right'
 
 SEQ3='night_right'
 
-CNN='squeezenet1_0'
+CNN='vgg16'
 
 SEQ_MODEL='lstm'
+
+LR='0.01'
 
 MODEL_NAME="gp_${CNN}_${SEQ_MODEL}"
 
@@ -28,7 +30,8 @@ python run.py train \
     --epochs $EPOCHS \
     --val_set $SEQ2 \
     --cnn_arch $CNN \
-    --sequence_model $SEQ_MODEL
+    --sequence_model $SEQ_MODEL \
+    --learning_rate $LR
 
 for i in $SEQ1 $SEQ2 $SEQ3
 do

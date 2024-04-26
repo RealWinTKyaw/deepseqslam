@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class NetVLAD(nn.Module):
     """NetVLAD layer implementation"""
 
@@ -60,7 +59,6 @@ class NetVLAD(nn.Module):
 
         return vlad
 
-
 class EmbedNet(nn.Module):
     def __init__(self, base_model, net_vlad):
         super(EmbedNet, self).__init__()
@@ -71,18 +69,4 @@ class EmbedNet(nn.Module):
         x = self.base_model(x)
         embedded_x = self.net_vlad(x)
         return embedded_x
-
-
-class TripletNet(nn.Module):
-    def __init__(self, embed_net):
-        super(TripletNet, self).__init__()
-        self.embed_net = embed_net
-
-    def forward(self, a, p, n):
-        embedded_a = self.embed_net(a)
-        embedded_p = self.embed_net(p)
-        embedded_n = self.embed_net(n)
-        return embedded_a, embedded_p, embedded_n
-
-    def feature_extract(self, x):
-        return self.embed_net(x)
+        

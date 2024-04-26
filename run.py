@@ -4,6 +4,7 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_curve, average_precision_score
 import tqdm, fire
 from PIL import Image
 Image.warnings.simplefilter('ignore')
@@ -13,6 +14,8 @@ import torch.nn as nn
 import torch.utils.model_zoo
 from torch.utils.data import Dataset, DataLoader
 from pytorch_tcn import TCN
+from netvlad import *
+from hard_triplet_loss import *
 
 import torchvision
 import torchvision.models as models
@@ -20,7 +23,7 @@ model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-sequence_models = ['lstm', 'gru', 'tcn']
+sequence_models = ['lstm', 'gru', 'tcn', 'transformer']
 
 normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
@@ -54,16 +57,16 @@ parser.add_argument('--epochs', default=200, type=int,
                     help='number of total epochs to run (default: 200)')
 parser.add_argument('--batch_size', default=32, type=int,
                     help='mini-batch size: 2^n (default: 32)')
-parser.add_argument('--lr', '--learning_rate', default=.001, type=float,
-                    help='initial learning rate (default: 1e-3)')
+parser.add_argument('--lr', '--learning_rate', default=.01, type=float,
+                    help='initial learning rate (default: 1e-2)')
 parser.add_argument('--load', default=False, type=bool,
                     help='restart training from last checkpoint')
 parser.add_argument('--nimgs', default=200, type=int,
                     help='number of images (default: 200)')
 parser.add_argument('--seq_len', default=10, type=int,
                     help='sequence length: ds (default: 10)')
-parser.add_argument('--nclasses', default=190, type=int,
-                    help='number of classes = nimgs - seq_len (default: 190)')
+parser.add_argument('--nclasses', default=196, type=int,
+                    help='number of classes = nimgs - seq_len (default: 184)')
 parser.add_argument('--img_size', default=128, type=int,
                     help='image size (default: 128)')
 parser.add_argument('--sequence_model', metavar='MODEL', default='lstm',
@@ -123,28 +126,35 @@ class DeepSeqSLAM(nn.Module):
 
         if FLAGS.cnn_arch == "resnet18":
             """ Resnet18 """
-            self.feature_dim = self.cnn.fc.in_features
-            self.cnn.fc = nn.Identity()
+            self.feature_dim = 512
+            #self.cnn.fc = nn.Identity()
+            first_layers = list(self.cnn.children())[:-2]
+            self.cnn = nn.Sequential(*first_layers)
 
         elif FLAGS.cnn_arch == "alexnet":
             """ Alexnet """
-            self.feature_dim = self.cnn.classifier[6].in_features
-            self.cnn.classifier[6] = nn.Identity()
+            self.feature_dim = 256
+            #self.cnn.classifier[6] = nn.Identity()
+            self.cnn = self.cnn.features
 
         elif FLAGS.cnn_arch == "vgg16":
             """ VGG16 """
-            self.feature_dim = self.cnn.classifier[6].in_features
-            self.cnn.classifier[6] = nn.Identity()
+            self.feature_dim = 512
+            self.cnn = self.cnn.features
+            #self.feature_dim = self.cnn.classifier[6].in_features
+            #self.cnn.classifier[6] = nn.Identity()
 
         elif FLAGS.cnn_arch == "squeezenet1_0":
             """ Squeezenet """
             self.feature_dim = 512
-            self.cnn.classifier[1] = nn.Identity()
+            #self.cnn.classifier[1] = nn.Identity()
+            self.cnn = self.cnn.features
 
         elif FLAGS.cnn_arch == "densenet161":
             """ Densenet """
-            self.feature_dim = self.cnn.classifier.in_features
-            self.cnn.classifier = nn.Identity()
+            self.feature_dim = 2208
+            #self.cnn.classifier = nn.Identity()
+            self.cnn = self.cnn.features
 
         else:
             print("=> Please check model name or configure architecture for feature extraction only, exiting...")
@@ -154,7 +164,10 @@ class DeepSeqSLAM(nn.Module):
         self.num_layers = 1
         self.input_size = self.feature_dim + 2
         self.hidden_units = 512
-        self.dropout = 0.3
+        self.dropout = 0.1
+        
+        self.netvlad = NetVLAD(num_clusters=1,dim=self.feature_dim)
+        self.embednet = EmbedNet(self.cnn, self.netvlad)
         
         # sh demo_deepseqslam.sh
         if FLAGS.sequence_model == "lstm":
@@ -164,14 +177,23 @@ class DeepSeqSLAM(nn.Module):
             self.sequence_model = nn.GRU(self.input_size, self.hidden_units, self.num_layers, dropout=self.dropout, batch_first=True)
 
         elif FLAGS.sequence_model == "tcn":
-            self.sequence_model = TCN(self.input_size, [self.hidden_units]*3, use_skip_connections=True, 
-                                      input_shape='NLC', dropout=self.dropout)
+            self.sequence_model = TCN(self.input_size, [self.hidden_units], input_shape='NLC', dropout=self.dropout, 
+                                      kernel_size=2, use_gate=True)
+
+        elif FLAGS.sequence_model == "transformer":
+            self.sequence_model = nn.Transformer(d_model=self.input_size, nhead=1, dropout=self.dropout,
+                                                 num_encoder_layers=1, 
+                                                 num_decoder_layers=1,  
+                                                 norm_first=True, batch_first=True)
 
         else:
             print("=> Please check sequence model name or configure architecture for feature extraction only, exiting...")
             exit()
 
-        self.mlp = nn.Linear(self.hidden_units, self.num_classes)
+        if FLAGS.sequence_model == "transformer":
+            self.mlp = nn.Linear(self.input_size, self.num_classes)
+        else:
+            self.mlp = nn.Linear(self.hidden_units, self.num_classes)
 
     def forward(self, inp):
         xs = inp[0].shape
@@ -180,7 +202,8 @@ class DeepSeqSLAM(nn.Module):
 
 	# Compute global descriptors
         x = x.view(xs[0]*xs[1],3,FLAGS.img_size,FLAGS.img_size) # 3xHXW
-        x = self.cnn(x)
+        x = self.embednet(x)
+        #x = self.cnn(x)
         x = x.view(xs[0], xs[1], self.feature_dim)
 
         # Concatenate descriptor (x) with positional data (p)
@@ -189,10 +212,11 @@ class DeepSeqSLAM(nn.Module):
 	# Propagate through sequence model
         if FLAGS.sequence_model == "tcn":
             r_out = self.sequence_model(x)
+        elif FLAGS.sequence_model == "transformer":
+            r_out = self.sequence_model(x, x)
         else:
             r_out, _ = self.sequence_model(x, None)
         out = self.mlp(r_out[:,-1,:])
-
         return out
 
 def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',  
@@ -202,7 +226,7 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',
           save_model_secs=60 * 1,  
           save_best_model=True,
           validate_every=5,
-          patience=3):  
+          patience=5):  
 
     print(FLAGS)
 
@@ -320,7 +344,7 @@ def train(restore_path=f'checkpoints/model_{FLAGS.model_name.lower()}.pth.tar',
                 if epochs_since_improvement >= patience:
                     print(f'Validation loss has not improved for {patience*validate_every} epochs. Early stopping...')
                     break  # Stop training
-
+                    
     print('loss=', record['loss'], 'top1=', record['top1'], 'top5=', record['top5'], 'lr=', record['learning_rate'])
 
     # Plot and save training loss curve
@@ -388,10 +412,11 @@ class DeepSeqSLAMTrain(object):
         self.optimizer = torch.optim.Adam(self.model.parameters(),
                                           lr=FLAGS.lr)
         self.lr = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.1,
-                      patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-6,
+                      patience=15, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-6,
                       eps=1e-08, verbose=False)
 
         self.loss = nn.CrossEntropyLoss()
+        #self.loss = HardTripletLoss()
         if FLAGS.ngpus > 0:
             self.loss = self.loss.cuda()
 
@@ -458,6 +483,7 @@ class DeepSeqSLAMVal(object):
         self.model = get_model(num_classes)
 
         self.loss = nn.CrossEntropyLoss(size_average=False)
+        #self.loss = HardTripletLoss()
         if FLAGS.ngpus > 0:
             self.loss = self.loss.cuda()
 
@@ -499,8 +525,11 @@ class DeepSeqSLAMVal(object):
 
         if not self.training:
             y_pred = torch.cat(y_pred, dim=0).data.cpu().numpy()
+
+            plt.figure()
             plt.plot(y_pred,',')
             plt.savefig(f'results/{FLAGS.model_name.lower()}/best_matches_{FLAGS.val_set}.jpg', bbox_inches='tight')
+            
             sim_m = torch.cat(sim_m, dim=0).data.cpu().numpy()
             plt.imshow(sim_m,cmap='jet_r')
             plt.colorbar()
